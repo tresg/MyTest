@@ -143,6 +143,33 @@ while($line = pg_fetch_array($result, null, PGSQL_ASSOC))
 }
 $ideas24->IDEASRequestFree($result);
 
+//This code is added to create seperate CYD for O&D import
+$ODImportDataPoint='O&D Data Points';
+$DPsPartofODImportDataPoints = array();
+    $q = ' SELECT  '.
+            ' dp_definition.dp_code '.
+        ' FROM  '.
+            ' public.cyd_subtypes,  '.
+            ' public.cyd_subtypes_dps,  '.
+            ' public.dp_definition 
+            '.
+        ' WHERE  '.
+            ' cyd_subtypes.id = cyd_subtypes_dps.cyd_subtype_id AND '.
+            ' cyd_subtypes_dps.dp_definition_id = dp_definition.dp_definition_id AND '.
+            ' cyd_subtypes.name = '."'".$ODImportDataPoint."' ".
+        ' ORDER BY '.
+            ' dp_definition.dp_code ASC ';
+    
+$result = $ideas24->IDEASRequest($q, $cnt, $err);
+
+while($line = pg_fetch_array($result, null, PGSQL_ASSOC))
+{
+    $tdp = $line["dp_code"];
+    $dpc = trim($tdp);
+    $DPsPartofODImportDataPoints[$dpc] = $dpc;    
+}
+$ideas24->IDEASRequestFree($result);  
+
 $whatdps = 'All Data Points';
 $inclFI = getmyOption("includeFI");
 if (!is_bool($inclFI) && $inclFI == 'rating')
@@ -763,6 +790,7 @@ if ($cli)
 
 $lu = NULL;
 $lun = NULL;
+$un =NULL;
 
 $csvclist = array();
 $cydlist = array();
@@ -771,7 +799,7 @@ $cydlistnonewr = array();
 $changesPerUser = array();
 $cydDPs = array();
 
-$standardCYDCorrections = $standardCYDFIRatings = $standardCYDFINoImpact = array();
+$standardCYDCorrections = $standardCYDFIRatings = $standardCYDFINoImpact = $ODimportDCYD = array();
 $standardCYDSubTypeFINoImpact  = array();
 
 
@@ -798,14 +826,14 @@ while($line = pg_fetch_array($result, null, PGSQL_ASSOC))
         $un = $line['dp_value_history_dis_user'];
         if ($un != $lun)
         {
-    	    $us = new IDEASUser($ideas24, $un, 'NoUser');
+            $us = new IDEASUser($ideas24, $un, 'NoUser');
             $lun = $un;
         }
         if ($us->Filled())
         {  
             $line['dp_value_history_dis_user'] = $us->getUserFormatted("u(n/e/l)");
         }
-	}
+    }
     if (isset($vsinfo[$line['dp_value_history_his_value_scope_id']]))
         $cinfo = $vsinfo[$line['dp_value_history_his_value_scope_id']];
     else
@@ -814,27 +842,32 @@ while($line = pg_fetch_array($result, null, PGSQL_ASSOC))
     $ind = $cinfo['A4Code'].'-'.$cinfo['Year'];
     $cydlist[$ind] = array("Name" => $cinfo['Name'], "A4Code" => $cinfo['A4Code'], "Year" => $cinfo['Year'], "Pub" => $cinfo['Pub'], "IsPartial" => $cinfo['IsPartial']); 
     
-    
-    if (isset($DPsPartofEWR[$dpc]))
-    {
-        $cydlistewr[$ind] = $cydlist[$ind];
-        if ($collMode == 0)  // manual
-        {
-            $standardCYDCorrections[$ind] = $cydlist[$ind];     
-        } else {
-            $standardCYDFIRatings[$ind] = $cydlist[$ind];          
-        } 
-    } else {
-        $cydlistnonewr[$ind] = $cydlist[$ind];
-        if ($collMode == 0) // manual
-        {
-            $standardCYDCorrections[$ind] = $cydlist[$ind];     
-        } else {
-            $standardCYDFINoImpact[$ind] = $cydlist[$ind];
-            $standardCYDSubTypeFINoImpact[$dpc] = $dpc;         
-        }      
-    }
+    //Modified to add data points that is part of O&D Import to a seperate file .
 
+    if (isset($DPsPartofODImportDataPoints[$dpc]))
+    {
+      $ODimportDCYD[$ind] = $cydlist[$ind];
+    }  else {
+            if (isset($DPsPartofEWR[$dpc]))
+                {
+                    $cydlistewr[$ind] = $cydlist[$ind];
+                    if ($collMode == 0)  // manual
+                    {
+                        $standardCYDCorrections[$ind] = $cydlist[$ind];     
+                    } else {
+                        $standardCYDFIRatings[$ind] = $cydlist[$ind];          
+                    } 
+                } else {
+                    $cydlistnonewr[$ind] = $cydlist[$ind];
+                    if ($collMode == 0) // manual
+                    {
+                        $standardCYDCorrections[$ind] = $cydlist[$ind];     
+                    } else {
+                        $standardCYDFINoImpact[$ind] = $cydlist[$ind];
+                        $standardCYDSubTypeFINoImpact[$dpc] = $dpc;         
+                    }      
+                }      
+        }
     $ind = $ind.'-'.$un;
     if (isset($changesPerUser[$ind]))
     {
@@ -875,11 +908,12 @@ if (!$downloadDetails)
 
 $runAutomation = getmyOption("automation");
 
-$taskAllDir = $taskSelectedDir = $OutputDir;
+$taskAllDir = $taskSelectedDir = $taskSelectedDirODIMPORT = $OutputDir;
 if ($runAutomation)
 {
     @mkdir($taskAllDir = $OutputDir."/TaskPublishAll");
     @mkdir($taskSelectedDir = $OutputDir."/TaskPubSelected");
+    @mkdir($taskSelectedDirODIMPORT = $OutputDir."/TaskPubSelectedODIMPORT");
 }
 
 if ($runStandardPreUpload)
@@ -887,7 +921,8 @@ if ($runStandardPreUpload)
     $cydNames2Files = array( 
         "CYDStandardCorrections" => array("file" => $OutputDir."_UPLOAD_Corrections_CYD_3_".$cname.".csv", "cyd" => &$standardCYDCorrections, "auto" => $taskAllDir.DIRECTORY_SEPARATOR."stdCYD.csv", "FullExport" => true),
         "CYDFIScoring" => array("file" => $OutputDir."_UPLOAD_FI_Scoring_CYD_5_".$cname.".csv", "cyd" => &$standardCYDFIRatings, "auto" => $taskAllDir.DIRECTORY_SEPARATOR."fiCYD.csv", "FullExport" => true), 
-        "CYDFINonScoring" => array("file" => $OutputDir."_UPLOAD_FI_NonScoring_CYD_6_".$cname.".csv", "cyd" => &$standardCYDFINoImpact, "auto" => $taskSelectedDir.DIRECTORY_SEPARATOR."finoscoreCYD.csv", "FullExport" => false)
+        "CYDFINonScoring" => array("file" => $OutputDir."_UPLOAD_FI_NonScoring_CYD_6_".$cname.".csv", "cyd" => &$standardCYDFINoImpact, "auto" => $taskSelectedDir.DIRECTORY_SEPARATOR."finoscoreCYD.csv", "FullExport" => true), 
+        "CYDODIMPORT" => array("file" => $OutputDir."_UPLOAD_ODIMPORT_".$cname.".csv", "cyd" => &$ODimportDCYD, "auto" => $taskSelectedDirODIMPORT.DIRECTORY_SEPARATOR."odImportCYD.csv", "FullExport" => false)
     );
     
     $title = array("Company name", "Asset4 Code", "Year", "AMP Score", "Is Partial");
@@ -968,7 +1003,9 @@ if ($runStandardPreUpload)
         }
         fclose($fp);
         
+       
     }
+    
 }
 
 

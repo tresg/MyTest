@@ -123,3 +123,5 @@ popd
 bash ../scriptStatus.bash CSV_${stat_sn} 1 $0 "`pwd`"  ValueExtraction done Retrieve ${stat_sn} changes
 
 
+
+
